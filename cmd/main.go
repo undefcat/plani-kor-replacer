@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 var (
@@ -36,12 +37,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var rdPath string
+
 	for {
 		fmt.Printf("읽을 경로를 입력하세요. 현재경로: %s\n", wd)
 		fmt.Printf("경로: ")
 
 		// 루트 디렉터리
-		rdPath, err := filepath.Abs(scanString())
+		rdPath, err = filepath.Abs(scanString())
 		if err != nil {
 			fmt.Println(err.Error())
 			continue
@@ -64,55 +67,67 @@ func main() {
 		// 디렉터리 여부 확인
 		if ! f.IsDir() {
 			fmt.Printf("%s 경로는 디렉터리가 아닙니다.\n", rdPath)
+		}
+
+		break
+	}
+
+	var outPath string
+
+	for {
+		fmt.Printf("출력 경로를 입력하세요. 현재경로: %s\n", wd)
+		fmt.Printf("경로: ")
+
+		// 출력 디렉터리
+		outPath, err = filepath.Abs(scanString())
+		if err != nil {
+			fmt.Println(err.Error())
 			continue
 		}
 
-		var outPath string
+		_, err := os.Stat(outPath)
+		if err == nil {
+			fmt.Printf("%s 경로는 이미 존재하는 경로입니다. 다른 경로를 선택해주세요.\n", outPath)
+			continue
+		}
 
-		for {
-			fmt.Printf("출력 경로를 입력하세요. 현재경로: %s\n", wd)
-			fmt.Printf("경로: ")
-
-			// 출력 디렉터리
-			outPath, err = filepath.Abs(scanString())
-			if err != nil {
-				fmt.Println(err.Error())
-				continue
-			}
-
-			_, err := os.Stat(outPath)
+		// 디렉터리 없는 경우 생성하고
+		// 다음 단계로 넘어간다.
+		if os.IsNotExist(err) {
+			err := os.Mkdir(outPath, os.ModePerm)
 			if err == nil {
-				fmt.Printf("%s 경로는 이미 존재하는 경로입니다. 다른 경로를 선택해주세요.\n", outPath)
-				continue
-			}
-
-			// 디렉터리 없는 경우 생성하고
-			// 다음 단계로 넘어간다.
-			if os.IsNotExist(err) {
-				err := os.Mkdir(outPath, os.ModePerm)
-				if err == nil {
-					break
-				}
-
-				fmt.Println(err.Error())
-				continue
+				break
 			}
 
 			fmt.Println(err.Error())
+			continue
 		}
 
-		fmt.Println("변환하지 않을 파일 확장자를 ,로 구분해서 공백 없이 적어주세요")
-		fmt.Print("확장자(.를 포함해서 적어주세요): ")
-		excludeExts := strings.Split(scanString(), ",")
+		break
+	}
 
-		const PlaceHolder = "__PLACEHOLDER__"
+	fmt.Println("변환하지 않을 파일 확장자를 ,로 구분해서 공백 없이 적어주세요")
+	fmt.Print("확장자(.를 포함해서 적어주세요): ")
 
-		placeHolder := regexp.MustCompile(PlaceHolder)
-		hidden := regexp.MustCompile(`__\((.+?)\)`)
-		target := regexp.MustCompile(`[가-힣]+`)
+	excludeExts := strings.Split(scanString(), ",")
 
+	const PlaceHolder = "__PLACEHOLDER__"
+
+	placeHolder := regexp.MustCompile(PlaceHolder)
+	hidden := regexp.MustCompile(`__\((.+?)\)`)
+	target := regexp.MustCompile(`[가-힣]+`)
+
+	fmt.Println("작업을 시작합니다.")
+
+	countChan := make(chan struct{}, 3)
+
+	var wait sync.WaitGroup
+
+	wait.Add(1)
+	go func() {
 		// 루트 디렉터리부터 순회
 		err = filepath.Walk(rdPath, func(path string, info os.FileInfo, err error) error {
+
 			if info.IsDir() {
 				// continue
 				return err
@@ -133,6 +148,7 @@ func main() {
 				log.Println(err1)
 				return err1
 			}
+
 
 			// 이미 존재하는 __() 함수 안의 한글들을 또 __()로 감싸면 안되므로
 			// 우선 잠시 PlaceHolder로 대체한다.
@@ -193,7 +209,31 @@ func main() {
 				fmt.Println(err)
 			}
 
+			// 완료된 파일작업 진행 현황을 알린다.
+			countChan <- struct{}{}
+
 			return err
 		})
-	}
+
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+
+		wait.Done()
+		close(countChan)
+	}()
+
+	wait.Add(1)
+	go func() {
+		total := 0
+		for range countChan {
+			total++
+			fmt.Printf("\r현재 %v번째 파일 작업을 완료했습니다.", total)
+		}
+
+		fmt.Printf("\r총 %v개의 파일을 작업 완료했습니다.", total)
+		wait.Done()
+	}()
+
+	wait.Wait()
 }
