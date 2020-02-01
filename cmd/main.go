@@ -26,7 +26,7 @@ func scanString() string {
 }
 
 func main() {
-	fmt.Println("한글 추출 및 변환기")
+	fmt.Println("한글 __() 변환기")
 	fmt.Println("1. 루트 디렉터리를 선택한다.")
 	fmt.Println("2. 출력 디렉터리를 선택한다.")
 	fmt.Println("3. 번역하지 않을 파일 확장자를 적는다.")
